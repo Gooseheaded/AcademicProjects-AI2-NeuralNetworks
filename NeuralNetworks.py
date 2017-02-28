@@ -33,10 +33,15 @@ class Neuron:
     def connect(self, neuron, weight):
         self.incoming.append((neuron, weight))
 
-    def clear():
-        for neuron in self.incoming:
-            neuron.clear()
+    def clear(self):
+        # This prevents unecessary duplication.
+        if self.value == None:
+            return
         self.value = None
+
+        for neuron in self.incoming:
+            if neuron[0].value != None:
+                neuron[0].clear()
 
 
 class NeuralNetwork:
@@ -82,32 +87,84 @@ class NeuralNetwork:
             results.append(neuron.feed_forward())
         return results
 
-    def get_error(self, hyp):
-        pass
+    def backpropagate(self, input_values, ideal_values, learning_rate):
+
+        output_values = self.feed_forward(input_values)
+
+        print("input_values", input_values)
+        print("ideal_values", ideal_values)
+        print("learning_rate", learning_rate)
+        print("output_values", output_values)
+
+        # Calculate squared error, to begin backpropagation.
+        # The corrected weights will only be applied later, so we simply store them for
+        # now.
+        corrected_weights = {}
+
+        # Verbosity.
+        error = .0
+        for idx in range(len(output_values)):
+            error += pow(ideal_values[idx] - output_values[idx], 2) / 2
+        print("total_error", error)
+
+        # Calculate output layer weight corrections.
+        # Verbosity.
+        print("===output layer weight corrections===")
+        output_layer = self.layers[-1]
+        for idx in range(len(output_layer)):
+            for prev_neuron in output_layer[idx].incoming:
+                neuron = output_layer[idx]
+                correction = output_layer_weight_correction(
+                    output_values[idx], ideal_values[idx], prev_neuron[0].value)
+                # Verbosity.
+                print("weight", prev_neuron[1],
+                      "corrected_weight", prev_neuron[1] - correction * learning_rate)
+                corrected_weights[prev_neuron[0]] = prev_neuron[
+                    1] - (correction * learning_rate)
+
+        # TODO(gctrindade): Calculate hidden layers' weight corrections
+        print("hidden layer weight corrections")
+        for hidden_idx in range(1, len(self.layers) - 1):
+            for next_neuron in self.layers[hidden_idx]:
+                for prev_neuron in next_neuron.incoming:
+                    pass
+
+        # Clear the network.
+        for neuron in output_layer:
+            neuron.clear()
+
+    def get_error(self, input_values, ideal_values):
+        output_values = self.feed_forward(input_values)
+
+        error = .0
+        for idx in range(len(output_values)):
+            error += pow(ideal_values[idx] - output_values[idx], 2) / 2
+
+        self.clear()
+        return error
+
+    def clear():
+        for neuron in self.layers[-1]:
+            neuron.clear()
 
 
 ##########
 
-def squared_error(output, ideal):
-    if len(output) != len(ideal):
-        print("Error: output values and ideal values have different lengths (", len(
-            output), ",", len(ideal))
-        return
 
-    error = .0
-    for idx in range(len(output)):
-        error += pow(ideal[idx] - output[idx], 2) / 2
-    return error
-
-
-def output_layer_weight_correction(output, ideal, incoming):
+def output_layer_weight_correction(output_value, ideal_value, prev_neuron_value):
     "The output layer backpropagation is different because it does need to account for outgoing values."
+
+    # The final result is the Derivative of total error with respect to the
+    # weight. It is calculated as the product of 3 partial derivatives:
+
     # Derivative of total error with respect to output.
-    deriv_error_to_out = (output - ideal)
+    deriv_error_to_out = (output_value - ideal_value)
+
     # Derivative of output with respect to net input.
-    deriv_out_to_net_in = (output * (1 - output))
+    deriv_out_to_net_in = (output_value * (1 - output_value))
+
     # Derivative of net input with respect to weight.
-    deriv_net_in_to_w = incoming
+    deriv_net_in_to_w = prev_neuron_value
 
     # Verbosity.
     # print(deriv_error_to_out, deriv_out_to_net_in, deriv_net_in_to_w)
@@ -115,12 +172,19 @@ def output_layer_weight_correction(output, ideal, incoming):
     return deriv_error_to_out * deriv_out_to_net_in * deriv_net_in_to_w
 
 
-def hidden_layer_weight_correction():
+def hidden_layer_weight_correction(next_value, prev_value):
+
+    # Derivative of total error with respect to output.
+    deriv_error_to_out = (output_value - ideal_value)
+
+    # Derivative of output with respect to net input.
+    deriv_out_to_net_in = (output_value * (1 - output_value))
+
     pass
 
 
 def simple_test():
-    "Generates a simple 2-4-1 network, with input [1,1]"
+    "Generates a simple 2-2-1 network, with input [1,1]"
 
     # Initialize the neuron layers.
     layers = [[], [], []]
@@ -137,64 +201,40 @@ def simple_test():
     for _ in range(2):
         output_layer.append(Neuron())
 
-    # Build a network out of the layers, with the default configurations.
-    # We will override them immediately after.
+    # Build a network out of the layers, with the default biases and weights.
     network = NeuralNetwork(layers)
 
-    # Override biases.
-    network.biases = [(.35,), (.60,)]
-    for neuron in hidden_layer:
-        neuron.bias = network.biases[0]
-    for neuron in output_layer:
-        neuron.bias = network.biases[1]
+    ###########################################################################
+    if True:  # For collapsing purposes.
+        # Override biases.
+        network.biases = [(.35,), (.60,)]
+        for neuron in hidden_layer:
+            neuron.bias = network.biases[0]
+        for neuron in output_layer:
+            neuron.bias = network.biases[1]
 
-    # Override weights.
-    # Weights cannot be assigned, they must be rebuilts, because tuples are
-    # immutable.
-    hidden_layer[0].incoming[0] = (input_layer[0], .15)
-    hidden_layer[0].incoming[1] = (input_layer[1], .20)
+        # Override weights.
+        # Weights cannot be assigned, they must be rebuilt, because tuples are
+        # immutable.
+        hidden_layer[0].incoming[0] = (input_layer[0], .15)
+        hidden_layer[0].incoming[1] = (input_layer[1], .20)
 
-    hidden_layer[1].incoming[0] = (input_layer[0], .25)
-    hidden_layer[1].incoming[1] = (input_layer[1], .30)
+        hidden_layer[1].incoming[0] = (input_layer[0], .25)
+        hidden_layer[1].incoming[1] = (input_layer[1], .30)
 
-    output_layer[0].incoming[0] = (hidden_layer[0], .40)
-    output_layer[0].incoming[1] = (hidden_layer[1], .45)
+        output_layer[0].incoming[0] = (hidden_layer[0], .40)
+        output_layer[0].incoming[1] = (hidden_layer[1], .45)
 
-    output_layer[1].incoming[0] = (hidden_layer[0], .50)
-    output_layer[1].incoming[1] = (hidden_layer[1], .55)
+        output_layer[1].incoming[0] = (hidden_layer[0], .50)
+        output_layer[1].incoming[1] = (hidden_layer[1], .55)
+    ###########################################################################
 
-    # Evaluate the network that was built.
-    input_values = [.05, .1]
-    output_values = network.feed_forward(input_values)
-    ideal_values = [.01, .99]
-    print("Input:", input_values)
-    print("Output:", output_values)
-    print("Ideal:", ideal_values)
-
-    # Calculate squared error, and begin backpropagation.
-    # The corrected weights will only be applied later, so we simply store them for
-    # now.
-    corrected_weights = {}
-    learning_rate = 0.5
-    print("Squared error:", squared_error(output_values, ideal_values))
-
-    # Calculate output layer weight corrections.
-    for idx in range(len(output_layer)):
-        for incoming in output_layer[idx].incoming:
-            neuron = output_layer[idx]
-            correction = output_layer_weight_correction(
-                output_values[idx], ideal_values[idx], incoming[0].value)
-            # Verbosity.
-            print("corrected ", incoming[1] - correction * learning_rate)
-            corrected_weights[incoming[0]] = incoming[
-                1] - (correction * learning_rate)
-
-    # Calculate hidden layers' weight corrections.
-    for layer in layers:
-        for neuron in layer:
-            for incoming in neuron.incoming:
-                # TODO(gctrindade): :3
-                pass
+    # Activate the network!
+    network.backpropagate(
+        input_values=[.05, .1],
+        ideal_values=[.01, .99],
+        learning_rate=0.5
+    )
 
 
 ##########
