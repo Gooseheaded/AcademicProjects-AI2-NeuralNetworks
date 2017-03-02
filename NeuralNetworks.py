@@ -10,8 +10,9 @@ class Neuron:
         self.incoming = []  # Array of tuples, (neuron, weight)
         self.bias = (0)     # Bias is a tuple (so it's passed by reference)
         self.value = None
+        self.error = 0
 
-    def feed_forward(self):
+    def feedforward(self):
         if self.value != None:
             return self.value
 
@@ -19,7 +20,7 @@ class Neuron:
         # Verbosity.
         # print("bias", self.bias[0])
         for neuron in self.incoming:
-            single_input = neuron[0].feed_forward()
+            single_input = neuron[0].feedforward()
             net_input += single_input * neuron[1]
             # Verbosity.
             # print(single_input, "*", neuron[1], "=", single_input * neuron[1])
@@ -70,7 +71,7 @@ class NeuralNetwork:
                 for prev_node in prev_layer:
                     next_node.connect(prev_node, random.random())
 
-    def feed_forward(self, inputs):
+    def feedforward(self, inputs):
         # TODO(gctrindade): Memoize values.
         # TODO(gctrindade): Validate that len(inputs) == len(layers[0])
         if len(inputs) != len(self.layers[0]):
@@ -84,12 +85,12 @@ class NeuralNetwork:
 
         results = []
         for neuron in self.layers[-1]:
-            results.append(neuron.feed_forward())
+            results.append(neuron.feedforward())
         return results
 
     def backpropagate(self, input_values, ideal_values, learning_rate):
 
-        output_values = self.feed_forward(input_values)
+        output_values = self.feedforward(input_values)
 
         print("input_values", input_values)
         print("ideal_values", ideal_values)
@@ -134,7 +135,7 @@ class NeuralNetwork:
             neuron.clear()
 
     def get_error(self, input_values, ideal_values):
-        output_values = self.feed_forward(input_values)
+        output_values = self.feedforward(input_values)
 
         error = .0
         for idx in range(len(output_values)):
@@ -184,7 +185,7 @@ def hidden_layer_weight_correction(next_value, prev_value):
 
 
 def simple_test():
-    "Generates a simple 2-2-1 network, with input [1,1]"
+    "Generates a simple 2-2-2 network, with input [1,1]"
 
     # Initialize the neuron layers.
     layers = [[], [], []]
