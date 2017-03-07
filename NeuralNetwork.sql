@@ -1,5 +1,4 @@
 
-
 DROP TABLE IF EXISTS neurons;
 DROP TABLE IF EXISTS biases;
 DROP TABLE IF EXISTS weights;
@@ -9,7 +8,7 @@ CREATE TABLE neurons(
 	layer		INTEGER NOT NULL,
 	net_input	REAL,
 	output 		REAL,
-	error 		REAL
+	delta 		REAL
 );
 
 CREATE TABLE biases(
@@ -23,6 +22,7 @@ CREATE TABLE weights(
 	to_layer	INTEGER NOT NULL,
 	to_id		INTEGER NOT NULL,
 	value 		REAL NOT NULL,
+	gradient	REAL,
 
 	PRIMARY KEY(from_layer, from_id, from_layer, to_id),
 	FOREIGN KEY(from_layer) REFERENCES neurons(layer),

@@ -21,7 +21,7 @@ class NeuralNetwork():
             layer += 1
             for _ in range(size):
                 cursor.execute('''
-                    INSERT INTO neurons (layer, net_input, output, error)
+                    INSERT INTO neurons (layer, net_input, output, delta)
                     VALUES (?, 0, 0, 0)
                 ;''', (str(layer),))
 
@@ -58,7 +58,7 @@ class NeuralNetwork():
                         # str(to_id)))
                     cursor.execute('''
                         INSERT INTO weights
-                        VALUES(?, ?, ?, ?, ?)
+                        VALUES(?, ?, ?, ?, ?, 0)
                     ''', (str(layer), str(from_id), str(layer + 1), str(to_id), str(random.random())))
 
         self.db.commit()
@@ -76,7 +76,7 @@ class NeuralNetwork():
 
         self.db.commit()
 
-    def feedforward(self, input_values, ideal_values=[]):
+    def feedforward(self, input_values):
         print("input_values", input_values)
         self.__set_input_values(input_values)
         cursor = self.db.cursor()
@@ -97,7 +97,7 @@ class NeuralNetwork():
             ;''', (str(from_layer)))]
             from_ids = [x[0] for x in from_neurons]
             from_outputs = [x[1] for x in from_neurons]
-            print("from_outputs", from_outputs)
+            # print("from_outputs", from_outputs)
 
             # Get all ids of the next layer.
             to_ids = [x[0] for x in cursor.execute('''
@@ -116,16 +116,16 @@ class NeuralNetwork():
                     WHERE from_layer = ?
                     AND to_id = ?
                 ;''', (str(from_layer), str(idx)))]
-                print("weights", weights)
+                # print("weights", weights)
 
                 net_input = biases[to_layer - 1]
-                print("net_input", net_input)
+                # print("net_input", net_input)
                 for i in range(len(weights)):  # Same len as len(from_outputs)
-                    print("from", from_outputs[i], "weight", weights[i])
+                    # print("from", from_outputs[i], "weight", weights[i])
                     net_input += from_outputs[i] * weights[i]
 
                 output = 1 / (1 + exp(- net_input))
-                print("output", output)
+                # print("output", output)
 
                 cursor.execute('''
                     UPDATE neurons
@@ -134,6 +134,127 @@ class NeuralNetwork():
                 ;''', (str(net_input), str(output), str(idx)))
 
         self.db.commit()
+
+    def __calculate_deltas(self, ideal_values):
+        # TODO(gctrindade): Include biases as well?
+        cursor = self.db.cursor()
+        output_layer = len(self.layers)
+
+        # First, calculate deltas for the output layer.
+        output_neurons = [x for x in cursor.execute('''
+            SELECT id, output
+            FROM neurons
+            WHERE layer = ?
+        ;''', (str(output_layer),))]
+
+        for idx in range(len(output_neurons)):
+            # [idx][0] is neuron id.
+            # [idx][1] is neuron output.
+
+            deriv1 = output_neurons[idx][1] * (1 - output_neurons[idx][1])
+            deriv2 = output_neurons[idx][1] - ideal_values[idx]
+
+            cursor.execute('''
+                UPDATE neurons
+                SET delta = ?
+                WHERE id = ?
+            ''', (str(deriv1 * deriv2), str(output_neurons[idx][0])))
+
+        # Then, calculate deltas for every other layer, backwards, ignoring the input and output layers.
+        for layer in range(len(self.layers) - 1, 1, -1):
+            hidden_neurons = [x for x in cursor.execute('''
+                SELECT id, output
+                FROM neurons
+                WHERE layer = ?
+            ;''', (str(layer),))]
+
+            prev_deltas = [x[0] for x in cursor.execute('''
+                SELECT delta
+                FROM neurons
+                WHERE layer = ?
+            ;''', (str(layer + 1),))]
+            # prev_deltas[0] is delta
+
+            for neuron in hidden_neurons:
+                # neuron[0] is id
+                # neuron[1] is output
+                
+                weights = [x[0] for x in cursor.execute('''
+                    SELECT value
+                    FROM weights
+                    WHERE from_id = ?
+                    AND to_layer = ?
+                ;''', (str(neuron[0]), str(layer + 1)))]
+
+                # Sanity check.
+                if len(weights) != len(prev_deltas):
+                    print("Sanity check failed!")
+                    print("\tweights", weights)
+                    print("\tdeltas", prev_deltas)
+                    return
+
+                deriv1 = neuron[1] * (1 - neuron[1])
+                deriv2 = 0
+                for idx in range(len(weights)):
+                    deriv2 += prev_deltas[idx] * weights[idx]
+
+                cursor.execute('''
+                    UPDATE neurons
+                    SET delta = ?
+                    WHERE id = ?
+                ;''', (str(deriv1 * deriv2), str(neuron[0])))
+
+        self.db.commit()
+
+    def __calculate_gradients(self):
+        # TODO(gctrindade)
+        cursor = self.db.cursor()
+
+        for layer in range(2, len(self.layers) + 1):
+            outputs = [x for x in cursor.execute('''
+                SELECT id, output
+                FROM neurons
+                WHERE layer= ?
+            ;''', (str(layer - 1),))]
+
+            deltas = [x for x in cursor.execute('''
+                SELECT id, delta
+                FROM neurons
+                WHERE layer = ?
+            ;''', (str(layer),))]
+
+            # Sanity check.
+            if len(deltas) != len(outputs):
+                print("Sanity check failed!")
+                print("deltas", deltas)
+                print("outputs", outputs)
+
+            for idx in range(len(deltas)):
+                for idx2 in range(len(outputs)):
+                    cursor.execute('''
+                        UPDATE weights
+                        SET gradient = ?
+                        WHERE from_id = ?
+                        AND to_id = ?
+                    ;''', (str(deltas[idx][1] * outputs[idx2][1]), str(outputs[idx2][0]), str(deltas[idx][0])))
+
+        self.db.commit()
+
+    def __correct_weights(self, learning_rate=1):
+        cursor = self.db.cursor()
+
+        cursor.execute('''
+            UPDATE weights
+            SET value = value - (gradient * ?)
+        ;''', (str(learning_rate),))
+
+        self.db.commit()
+
+    def backpropagate(self, input_values, ideal_values, learning_rate=1):
+        self.feedforward(input_values, ideal_values)
+        self.__calculate_deltas(ideal_values)
+        self.__calculate_gradients()
+        self.__correct_weights(learning_rate)
 
     def setup_example(self):
         cursor = self.db.cursor()
@@ -190,33 +311,11 @@ class NeuralNetwork():
         ;''')
         self.db.commit()
 
-nn = NeuralNetwork([2, 2, 2])
-nn.setup_example()
-nn.feedforward([0.05, 0.10])
+
+if True:
+    nn = NeuralNetwork([2, 2, 2])
+    nn.setup_example()
+    # nn.feedforward([0.05, 0.10])
+    nn.backpropagate([0.05, 0.10], [0.01, 0.99], 0.5)
 # nn.feedforward([round(random.random()) for _ in range(2)])
-
-
-# TODO: Translate
-# def output_weight_correction(output_value, ideal_value, prev_neuron_value):
-#     "The output layer backpropagation is different because it does need to account for outgoing values."
-
-#     # The final result is the Derivative of total error with respect to the
-#     # weight. It is calculated as the product of 3 partial derivatives:
-
-#     # Derivative of total error with respect to output.
-#     deriv_total_err_to_out = (output_value - ideal_value)
-
-#     # Derivative of output with respect to net input.
-#     deriv_out_to_net_in = (output_value * (1 - output_value))
-
-#     # Derivative of net input with respect to weight.
-#     deriv_net_in_to_w = prev_neuron_value
-
-#     # Verbosity.
-#     print("deriv_total_err_to_out", deriv_total_err_to_out)
-#     print("deriv_out_to_net_in", deriv_out_to_net_in)
-#     print("deriv_net_in_to_w", deriv_net_in_to_w)
-#     print("weight_correction", deriv_total_err_to_out *
-#           deriv_out_to_net_in * deriv_net_in_to_w)
-
-#     return deriv_total_err_to_out * deriv_out_to_net_in * deriv_net_in_to_w
+ 
