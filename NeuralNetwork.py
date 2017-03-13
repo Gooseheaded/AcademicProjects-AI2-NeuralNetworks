@@ -1,14 +1,18 @@
-from math import exp
+from sys import stdout
+from math import exp, floor
 import random
 import sqlite3
 
 
 class NeuralNetwork():
 
-    def __init__(self, layer_sizes):
-        self.db = sqlite3.connect('NeuralNetwork.db')
+    def __init__(self, name, layer_sizes, rewrite=False):
+        self.db = sqlite3.connect(name + '.db')
         self.layers = layer_sizes  # Ignore the input layer.
         cursor = self.db.cursor()
+
+        if not rewrite:
+            return
 
         # Clear the database.
         cursor.execute('''DELETE FROM neurons;''')
@@ -76,8 +80,116 @@ class NeuralNetwork():
 
         self.db.commit()
 
+    def __calculate_deltas(self, ideal_values):
+        # TODO(gctrindade): Include biases as well?
+        cursor = self.db.cursor()
+        output_layer = len(self.layers)
+
+        # First, calculate deltas for the output layer.
+        output_neurons = [x for x in cursor.execute('''
+            SELECT id, output
+            FROM neurons
+            WHERE layer = ?
+        ;''', (str(output_layer),))]
+
+        for idx in range(len(output_neurons)):
+            # [idx][0] is neuron id.
+            # [idx][1] is neuron output.
+
+            deriv1 = output_neurons[idx][1] * (1 - output_neurons[idx][1])
+            deriv2 = output_neurons[idx][1] - ideal_values[idx]
+
+            cursor.execute('''
+                UPDATE neurons
+                SET delta = ?
+                WHERE id = ?
+            ''', (str(deriv1 * deriv2), str(output_neurons[idx][0])))
+
+        # Then, calculate deltas for every other layer, backwards, ignoring the
+        # input and output layers.
+        for layer in range(len(self.layers) - 1, 1, -1):
+            hidden_neurons = [x for x in cursor.execute('''
+                SELECT id, output
+                FROM neurons
+                WHERE layer = ?
+            ;''', (str(layer),))]
+
+            prev_deltas = [x[0] for x in cursor.execute('''
+                SELECT delta
+                FROM neurons
+                WHERE layer = ?
+            ;''', (str(layer + 1),))]
+            # prev_deltas[0] is delta
+
+            for neuron in hidden_neurons:
+                # neuron[0] is id
+                # neuron[1] is output
+
+                weights = [x[0] for x in cursor.execute('''
+                    SELECT value
+                    FROM weights
+                    WHERE from_id = ?
+                    AND to_layer = ?
+                ;''', (str(neuron[0]), str(layer + 1)))]
+
+                # Sanity check.
+                if len(weights) != len(prev_deltas):
+                    print("deltas) Sanity check failed!")
+                    print("\tweights", weights)
+                    print("\tdeltas", prev_deltas)
+                    return
+
+                deriv1 = neuron[1] * (1 - neuron[1])
+                deriv2 = 0
+                for idx in range(len(weights)):
+                    deriv2 += prev_deltas[idx] * weights[idx]
+
+                cursor.execute('''
+                    UPDATE neurons
+                    SET delta = ?
+                    WHERE id = ?
+                ;''', (str(deriv1 * deriv2), str(neuron[0])))
+
+        self.db.commit()
+
+    def __calculate_gradients(self):
+        cursor = self.db.cursor()
+
+        for layer in range(2, len(self.layers) + 1):
+            outputs = [x for x in cursor.execute('''
+                SELECT id, output
+                FROM neurons
+                WHERE layer= ?
+            ;''', (str(layer - 1),))]
+
+            deltas = [x for x in cursor.execute('''
+                SELECT id, delta
+                FROM neurons
+                WHERE layer = ?
+            ;''', (str(layer),))]
+
+            for idx in range(len(deltas)):
+                for idx2 in range(len(outputs)):
+                    cursor.execute('''
+                        UPDATE weights
+                        SET gradient = ?
+                        WHERE from_id = ?
+                        AND to_id = ?
+                    ;''', (str(deltas[idx][1] * outputs[idx2][1]), str(outputs[idx2][0]), str(deltas[idx][0])))
+
+        self.db.commit()
+
+    def __correct_weights(self, learning_rate=1):
+        cursor = self.db.cursor()
+
+        cursor.execute('''
+            UPDATE weights
+            SET value = value - (gradient * ?)
+        ;''', (str(learning_rate),))
+
+        self.db.commit()
+
     def feedforward(self, input_values):
-        print("input_values", input_values)
         self.__set_input_values(input_values)
         cursor = self.db.cursor()
 
@@ -133,128 +245,55 @@ class NeuralNetwork():
                     WHERE id = ?
                 ;''', (str(net_input), str(output), str(idx)))
 
-        self.db.commit()
-
-    def __calculate_deltas(self, ideal_values):
-        # TODO(gctrindade): Include biases as well?
-        cursor = self.db.cursor()
-        output_layer = len(self.layers)
-
-        # First, calculate deltas for the output layer.
-        output_neurons = [x for x in cursor.execute('''
-            SELECT id, output
+        outputs = [x[0] for x in cursor.execute('''
+            SELECT output
             FROM neurons
             WHERE layer = ?
-        ;''', (str(output_layer),))]
-
-        for idx in range(len(output_neurons)):
-            # [idx][0] is neuron id.
-            # [idx][1] is neuron output.
-
-            deriv1 = output_neurons[idx][1] * (1 - output_neurons[idx][1])
-            deriv2 = output_neurons[idx][1] - ideal_values[idx]
-
-            cursor.execute('''
-                UPDATE neurons
-                SET delta = ?
-                WHERE id = ?
-            ''', (str(deriv1 * deriv2), str(output_neurons[idx][0])))
-
-        # Then, calculate deltas for every other layer, backwards, ignoring the input and output layers.
-        for layer in range(len(self.layers) - 1, 1, -1):
-            hidden_neurons = [x for x in cursor.execute('''
-                SELECT id, output
-                FROM neurons
-                WHERE layer = ?
-            ;''', (str(layer),))]
-
-            prev_deltas = [x[0] for x in cursor.execute('''
-                SELECT delta
-                FROM neurons
-                WHERE layer = ?
-            ;''', (str(layer + 1),))]
-            # prev_deltas[0] is delta
-
-            for neuron in hidden_neurons:
-                # neuron[0] is id
-                # neuron[1] is output
-                
-                weights = [x[0] for x in cursor.execute('''
-                    SELECT value
-                    FROM weights
-                    WHERE from_id = ?
-                    AND to_layer = ?
-                ;''', (str(neuron[0]), str(layer + 1)))]
-
-                # Sanity check.
-                if len(weights) != len(prev_deltas):
-                    print("Sanity check failed!")
-                    print("\tweights", weights)
-                    print("\tdeltas", prev_deltas)
-                    return
-
-                deriv1 = neuron[1] * (1 - neuron[1])
-                deriv2 = 0
-                for idx in range(len(weights)):
-                    deriv2 += prev_deltas[idx] * weights[idx]
-
-                cursor.execute('''
-                    UPDATE neurons
-                    SET delta = ?
-                    WHERE id = ?
-                ;''', (str(deriv1 * deriv2), str(neuron[0])))
+        ;''', (len(self.layers),))]
 
         self.db.commit()
 
-    def __calculate_gradients(self):
-        # TODO(gctrindade)
+        return outputs
+
+    def get_total_error(self, ideal_values):
         cursor = self.db.cursor()
 
-        for layer in range(2, len(self.layers) + 1):
-            outputs = [x for x in cursor.execute('''
-                SELECT id, output
-                FROM neurons
-                WHERE layer= ?
-            ;''', (str(layer - 1),))]
+        output_values = [x[0] for x in cursor.execute('''
+            SELECT output
+            FROM neurons
+            WHERE layer = ?
+        ;''', (len(self.layers),))]
 
-            deltas = [x for x in cursor.execute('''
-                SELECT id, delta
-                FROM neurons
-                WHERE layer = ?
-            ;''', (str(layer),))]
+        total_error = 0
+        for idx in range(len(output_values)):
+            total_error += ((output_values[idx] -
+                             ideal_values[idx]) ** 2) * 0.5
 
-            # Sanity check.
-            if len(deltas) != len(outputs):
-                print("Sanity check failed!")
-                print("deltas", deltas)
-                print("outputs", outputs)
-
-            for idx in range(len(deltas)):
-                for idx2 in range(len(outputs)):
-                    cursor.execute('''
-                        UPDATE weights
-                        SET gradient = ?
-                        WHERE from_id = ?
-                        AND to_id = ?
-                    ;''', (str(deltas[idx][1] * outputs[idx2][1]), str(outputs[idx2][0]), str(deltas[idx][0])))
-
-        self.db.commit()
-
-    def __correct_weights(self, learning_rate=1):
-        cursor = self.db.cursor()
-
-        cursor.execute('''
-            UPDATE weights
-            SET value = value - (gradient * ?)
-        ;''', (str(learning_rate),))
-
-        self.db.commit()
+        return total_error
 
     def backpropagate(self, input_values, ideal_values, learning_rate=1):
-        self.feedforward(input_values, ideal_values)
+        self.feedforward(input_values)
         self.__calculate_deltas(ideal_values)
         self.__calculate_gradients()
         self.__correct_weights(learning_rate)
+
+        self.db.commit()
+
+    def clear_and_save(self):
+        cursor = self.db.cursor()
+        cursor.execute('''
+            UPDATE neurons
+            SET output = 0, net_input = 0, delta = 0
+        ;''')
+
+        cursor.execute('''
+            UPDATE weights
+            SET gradient = 0
+        ;''')
+
+        print("Saving db...")
+
+        self.db.commit()
 
     def setup_example(self):
         cursor = self.db.cursor()
@@ -312,10 +351,40 @@ class NeuralNetwork():
         self.db.commit()
 
 
-if True:
-    nn = NeuralNetwork([2, 2, 2])
-    nn.setup_example()
-    # nn.feedforward([0.05, 0.10])
-    nn.backpropagate([0.05, 0.10], [0.01, 0.99], 0.5)
-# nn.feedforward([round(random.random()) for _ in range(2)])
- 
+def train(nn, training_data):
+    saved_db = False
+
+    try:
+        error = 1
+        while error > 0.09:
+            for data in training_data:
+                nn.backpropagate(data[0], data[1], 1)
+
+            error = 0
+            for data in training_data:
+                nn.feedforward(data[0])
+                error += nn.get_total_error(data[1])
+
+            print("error", error)
+
+    except KeyboardInterrupt:
+        nn.clear_and_save()
+        saved_db = True
+    finally:
+        if not saved_db:
+            nn.clear_and_save()
+
+
+nn = NeuralNetwork("AND", [2, 2, 1])
+data = [([0., 0.], [0.]),
+        ([0., 1.], [0.]),
+        ([1., 0.], [0.]),
+        ([1., 1.], [1.])]
+
+train(nn, data)
+
+# for d in data:
+#     print(d[0], ">>>", nn.feedforward(d[0]))
+
+# manual_input = [0.8, 0.8]
+# print(manual_input, ">>>", nn.feedforward(manual_input))
