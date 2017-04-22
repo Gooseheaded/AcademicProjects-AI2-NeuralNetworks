@@ -3,7 +3,6 @@ from math import exp, floor
 import random
 import sqlite3
 
-
 class NeuralNetwork():
 
     def __init__(self, name, layer_sizes, rewrite=False):
@@ -78,7 +77,7 @@ class NeuralNetwork():
                 AND id = ?
             ;''', (str(input_values[idx]), str(idx + 1)))
 
-        self.db.commit()
+        # self.db.commit()
 
     def __calculate_deltas(self, ideal_values):
         # TODO(gctrindade): Include biases as well?
@@ -150,7 +149,7 @@ class NeuralNetwork():
                     WHERE id = ?
                 ;''', (str(deriv1 * deriv2), str(neuron[0])))
 
-        self.db.commit()
+        # self.db.commit()
 
     def __calculate_gradients(self):
         cursor = self.db.cursor()
@@ -177,7 +176,7 @@ class NeuralNetwork():
                         AND to_id = ?
                     ;''', (str(deltas[idx][1] * outputs[idx2][1]), str(outputs[idx2][0]), str(deltas[idx][0])))
 
-        self.db.commit()
+        # self.db.commit()
 
     def __correct_weights(self, learning_rate=1):
         cursor = self.db.cursor()
@@ -187,7 +186,7 @@ class NeuralNetwork():
             SET value = value - (gradient * ?)
         ;''', (str(learning_rate),))
 
-        self.db.commit()
+        # self.db.commit()
 
     def feedforward(self, input_values):
         self.__set_input_values(input_values)
@@ -251,7 +250,7 @@ class NeuralNetwork():
             WHERE layer = ?
         ;''', (len(self.layers),))]
 
-        self.db.commit()
+        # self.db.commit()
 
         return outputs
 
@@ -277,7 +276,7 @@ class NeuralNetwork():
         self.__calculate_gradients()
         self.__correct_weights(learning_rate)
 
-        self.db.commit()
+        # self.db.commit()
 
     def clear_and_save(self):
         cursor = self.db.cursor()
@@ -291,7 +290,7 @@ class NeuralNetwork():
             SET gradient = 0
         ;''')
 
-        print("Saving db...")
+        print("\nSaving db...")
 
         self.db.commit()
 
@@ -350,41 +349,26 @@ class NeuralNetwork():
         ;''')
         self.db.commit()
 
+    def train(self, training_data, learning_rate=1, max_error=0.01):
+        print("Training network with rate set to {0}, until error is less than {1} .".format(learning_rate, max_error))
+        print("Press Ctrl-C to stop.")
+        try:
+            saved_db = False
+            error = 1
+            while error > max_error:
+                for data in training_data:
+                    self.backpropagate(data[0], data[1], 1)
 
-def train(nn, training_data):
-    saved_db = False
+                error = 0
+                for data in training_data:
+                    self.feedforward(data[0])
+                    error += self.get_total_error(data[1])
 
-    try:
-        error = 1
-        while error > 0.09:
-            for data in training_data:
-                nn.backpropagate(data[0], data[1], 1)
+                print("Error:", error, end='\r')
 
-            error = 0
-            for data in training_data:
-                nn.feedforward(data[0])
-                error += nn.get_total_error(data[1])
-
-            print("error", error)
-
-    except KeyboardInterrupt:
-        nn.clear_and_save()
-        saved_db = True
-    finally:
-        if not saved_db:
-            nn.clear_and_save()
-
-
-nn = NeuralNetwork("AND", [2, 2, 1])
-data = [([0., 0.], [0.]),
-        ([0., 1.], [0.]),
-        ([1., 0.], [0.]),
-        ([1., 1.], [1.])]
-
-train(nn, data)
-
-# for d in data:
-#     print(d[0], ">>>", nn.feedforward(d[0]))
-
-# manual_input = [0.8, 0.8]
-# print(manual_input, ">>>", nn.feedforward(manual_input))
+        except KeyboardInterrupt:
+            self.clear_and_save()
+            saved_db = True
+        finally:
+            if not saved_db:
+                self.clear_and_save()
